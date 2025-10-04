@@ -44,36 +44,48 @@ public class Main {
         System.out.println("ElpriserAPI initialiserat. Cachning: På");
         System.out.println("!!! ANVÄNDER MOCK-DATA FÖR TEST !!!");
 
+        // --- Fetch prices ---
         List<ElpriserAPI.Elpris> prices = api.getPriser(date, priceZone);
+
+        // Include next day's data (for charging window across midnight)
+        List<ElpriserAPI.Elpris> nextDayPrices = api.getPriser(date.plusDays(1), priceZone);
+        if (nextDayPrices != null && !nextDayPrices.isEmpty()) {
+            prices.addAll(nextDayPrices);
+        }
+
         if (prices == null || prices.isEmpty()) {
             System.out.println("Inga priser tillgängliga för " + date + " i " + zone);
             return;
         }
 
-        // Mean price
+        // --- Mean price ---
         double meanPrice = prices.stream().mapToDouble(ElpriserAPI.Elpris::sekPerKWh).average().orElse(0);
         System.out.printf("Medelpris: %.3f SEK/kWh%n", meanPrice);
 
-        // Cheapest & most expensive
+        // --- Cheapest & Most expensive ---
         ElpriserAPI.Elpris cheapest = Collections.min(prices, Comparator.comparingDouble(ElpriserAPI.Elpris::sekPerKWh));
         ElpriserAPI.Elpris mostExpensive = Collections.max(prices, Comparator.comparingDouble(ElpriserAPI.Elpris::sekPerKWh));
 
-        int minStart = cheapest.timeStart().getHour();
-        int maxStart = mostExpensive.timeStart().getHour();
+        // Show min & max in test-expected format (HH-HH and öre)
+        int lowStart = cheapest.timeStart().getHour();
+        int lowEnd = (lowStart + 1) % 24;
+        int highStart = mostExpensive.timeStart().getHour();
+        int highEnd = (highStart + 1) % 24;
 
-        System.out.printf("Lägsta pris: %02d-%02d -> %.1f SEK/kWh%n", minStart, (minStart + 1) % 24, cheapest.sekPerKWh());
-        System.out.printf("Högsta pris: %02d-%02d -> %.1f SEK/kWh%n", maxStart, (maxStart + 1) % 24, mostExpensive.sekPerKWh());
+        System.out.printf("Lägsta pris: %02d-%02d -> %.1f öre%n", lowStart, lowEnd, cheapest.sekPerKWh() * 100);
+        System.out.printf("Högsta pris: %02d-%02d -> %.1f öre%n", highStart, highEnd, mostExpensive.sekPerKWh() * 100);
 
         // --- Sorted output ---
         if (arguments.containsKey("--sorted")) {
             List<ElpriserAPI.Elpris> sorted = new ArrayList<>(prices);
             sorted.sort(Comparator.comparingDouble(ElpriserAPI.Elpris::sekPerKWh));
+            Collections.reverse(sorted); // match expected order
 
             for (ElpriserAPI.Elpris p : sorted) {
                 int startHour = p.timeStart().getHour();
                 int endHour = (startHour + 1) % 24;
                 double orePrice = p.sekPerKWh() * 100;
-                String formatted = String.format(Locale.forLanguageTag("sv-SE"), "%.2f", orePrice).replace('.', ',');
+                String formatted = String.format("%.2f", orePrice).replace('.', ',');
                 System.out.printf("%02d-%02d %s öre%n", startHour, endHour, formatted);
             }
         }
@@ -96,14 +108,16 @@ public class Main {
             }
 
             if (bestStart != null) {
-                double totalCostOre = bestCost * 100;
-                String formattedCost = String.format(Locale.forLanguageTag("sv-SE"), "%.1f", totalCostOre).replace('.', ',');
-                System.out.printf("Påbörja laddning: bästa %dh-fönster startar %s (total kostnad: %s öre)%n",
-                        hours, bestStart.timeStart(), formattedCost);
+                int startHour = bestStart.timeStart().getHour();
+                double totalOre = bestCost * 100; // convert SEK to öre
+                String formattedOre = String.format("%.1f", totalOre).replace('.', ',');
+                System.out.printf("Påbörja laddning: bästa %dh-fönster startar kl %02d:00 (total kostnad: %s öre)%n",
+                        hours, startHour, formattedOre);
             }
         }
     }
 
+    // --- Argument parser helper ---
     private static Map<String, String> parseArgs(String[] args) {
         Map<String, String> map = new HashMap<>();
         for (int i = 0; i < args.length; i++) {
